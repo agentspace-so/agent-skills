@@ -9,6 +9,24 @@ import pathlib
 import re
 import sys
 
+
+def _normalize_msys_path(path_str: str) -> str:
+    """Convert MSYS/Git-Bash style paths (/c/Users/...) to Windows paths on win32.
+
+    The companion gen.sh runs under Git Bash on Windows and feeds the Python
+    extractor a list of session file paths produced by `find`, which emits
+    MSYS-style paths. The Windows Python interpreter does not resolve those —
+    so we translate them here. No-op on non-Windows platforms or paths that
+    are already Windows-formatted.
+    """
+    if sys.platform != "win32":
+        return path_str
+    m = re.match(r"^/([a-zA-Z])/(.*)$", path_str)
+    if not m:
+        return path_str
+    drive, rest = m.group(1).upper(), m.group(2).replace("/", "\\")
+    return f"{drive}:\\{rest}"
+
 IMAGE_MAGIC_PREFIXES: dict[str, str] = {
     "iVBORw0KGgo": "png",
     "/9j/": "jpg",
@@ -95,9 +113,9 @@ def main(argv: list[str]) -> int:
         print(f"invalid output path: {err}", file=sys.stderr)
         return 2
 
-    sessions_list_path = pathlib.Path(argv[2])
+    sessions_list_path = pathlib.Path(_normalize_msys_path(argv[2]))
     session_paths = [
-        pathlib.Path(line)
+        pathlib.Path(_normalize_msys_path(line))
         for line in sessions_list_path.read_text().splitlines()
         if line.strip()
     ]

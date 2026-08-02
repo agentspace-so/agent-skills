@@ -45,7 +45,7 @@ Do **not** auto-trigger for a plain "generate an image" request if the user didn
 
 ## How to invoke
 
-A single bash script handles everything: runs `codex exec` with the right flags, then decodes the generated image from the persisted session rollout.
+A single bash script handles everything: runs `codex exec` with the right flags, then copies the generated image out of `$CODEX_HOME/generated_images/`.
 
 **Text-to-image:**
 
@@ -64,7 +64,7 @@ bash scripts/gen.sh \
   --out <absolute/path/to/output.png>
 ```
 
-Optional: `--timeout-sec 300` (default 300).
+Optional: `--timeout-sec 300` (default 600) and `--model gpt-5.4` (default `gpt-5.4`, which must be a non-code-mode model).
 
 ## Default behavior
 
@@ -84,6 +84,8 @@ Optional: `--timeout-sec 300` (default 300).
 1. `codex` CLI installed — `brew install codex` or see [openai/codex](https://github.com/openai/codex).
 2. Logged in with a ChatGPT plan that includes Image 2 — `codex login`.
 3. `python3` on PATH (ships with macOS; `apt install python3` on Linux).
+4. `[features] image_generation = true` in `~/.codex/config.toml` (the CLI `--enable` flag alone is not sufficient in codex-cli 0.146.0+).
+5. `bubblewrap` available on Linux (install the codex-published static binary to `~/.local/bin/bwrap` if the distro package needs sudo).
 
 This skill does **not** grant image-generation capability on its own. It exposes the capability the user already has through their ChatGPT subscription.
 
@@ -97,23 +99,27 @@ This skill does **not** grant image-generation capability on its own. It exposes
 | 4    | `--ref` file does not exist |
 | 5    | `codex exec` failed (auth? network? model?) |
 | 6    | no new session file detected |
-| 7    | imagegen did not produce an image payload (feature not enabled, quota, or capability refused) |
+| 7    | no generated image found (feature not enabled, stale ChatGPT auth, or capability refused) |
 
-On failure, name the layer in one sentence instead of dumping the full stderr at the user.
+On failure, name the layer in one sentence instead of dumping the full stderr at the user. If exit code 7 repeats, the most likely causes are a stale ChatGPT login (`codex login` to refresh) or the code-mode-only default model being used instead of `gpt-5.4`.
 
 ## How it works
 
-The `codex` CLI reuses the logged-in ChatGPT session and exposes an `imagegen` tool (gated behind the `image_generation` feature flag). The script:
+The `codex` CLI reuses the logged-in ChatGPT session and exposes the `image_gen.imagegen` tool (a namespaced extension tool gated behind the `image_generation` feature). The script:
 
 1. snapshots `~/.codex/sessions/` before the run
-2. runs `codex exec --enable image_generation --sandbox read-only ...` (with `-i <file>` for each reference image)
-3. diffs the sessions directory, then invokes `scripts/extract_image.py` to scan every new rollout JSONL for a base64 image payload (PNG / JPEG / WebP magic-header match)
-4. decodes the largest matching blob and writes it to `--out`
+2. runs `codex exec -m gpt-5.4 --enable image_generation --sandbox read-only ...` (with `-i <file>` for each reference image)
+3. diffs the sessions directory to find the new session id(s)
+4. looks for the saved image under `$CODEX_HOME/generated_images/<session-id>/call_*.png` and copies the newest one to `--out`
+5. falls back to `scripts/extract_image.py` (base64-in-rollout scan) only for older codex-cli 0.111-era builds
 
-Two non-obvious flags other wrappers get wrong on codex-cli 0.111.0+:
+Non-obvious facts for codex-cli 0.146.0+:
 
-- `--enable image_generation` is **required**; the feature is still under-development and off by default.
-- `--ephemeral` **must not** be used — ephemeral sessions aren't persisted, so the image payload has nowhere to live.
+- `[features] image_generation = true` in `~/.codex/config.toml` is **required**; the CLI `--enable image_generation` flag alone does not expose the tool.
+- The model **must not** be code-mode-only (`gpt-5.6-sol` / `terra` / `luna` have `tool_mode: code_mode_only` and do not expose `image_gen`). Use `gpt-5.4` or another non-code-mode model.
+- A **stale ChatGPT login** (old refresh token in `~/.codex/auth.json`) silently hides the `image_gen.imagegen` tool even though ordinary chat still works. If generation stops working, refresh with `codex login`.
+- `--ephemeral` must not be used — the session must be persisted so its id can be mapped to the saved image.
+- `bubblewrap` must exist on Linux or the sandboxed `exec` tool panics before the model can do anything.
 
 ## Data handling
 

@@ -126,4 +126,4 @@ The script is narrowly scoped on purpose:
 
 ## What this skill is not
 
-Not a direct OpenAI API client. Not a capability grant — it depends on the user's working Codex CLI login. Not a multi-tenant service (one call per invocation; concurrent calls are serialized by the filesystem-snapshot diff).
+Not a direct OpenAI API client. Not a capability grant — it depends on the user's working Codex CLI login. One call per invocation. Parallel calls are safe: each run tags its prompt with a unique ID and only reads the session rollout that carries it, so you can start several `gen.sh ... &` calls and `wait` for them.

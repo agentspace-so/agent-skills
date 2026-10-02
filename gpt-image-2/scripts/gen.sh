@@ -75,6 +75,11 @@ if [[ ${#REF_IMAGES[@]} -gt 0 ]]; then
 fi
 instruction+=$'\nRequirements: generate the image directly, return only the image, no explanation.\n\nRequest:\n'"$PROMPT"
 
+# Unique run tag so parallel gen.sh calls each pick only their own session
+# rollout (the prompt, and therefore this tag, is written into it).
+RUN_TAG="gen-run-$(uuidgen 2>/dev/null || python3 -c 'import uuid;print(uuid.uuid4())')"
+instruction+=$'\n\n(Internal run tag, ignore: '"$RUN_TAG"')' 
+
 # `-i` is a variadic flag (<FILE>...), so passing the prompt as the trailing
 # positional would be consumed as another image file. Feed the prompt via
 # stdin instead (codex exec reads from stdin when no prompt positional is
@@ -108,6 +113,13 @@ find "$SESSIONS_ROOT" -type f -name 'rollout-*.jsonl' -print 2>/dev/null | sort 
 new_sessions_file="$(mktemp)"
 trap 'rm -f "$before" "$after" "$stdout_log" "$stderr_log" "$new_sessions_file"' EXIT
 comm -13 "$before" "$after" > "$new_sessions_file" || true
+
+# Keep only the rollout(s) carrying this run's tag; fall back to all new ones
+# if the tag isn't found (e.g. a future Codex stops logging the prompt).
+tagged="$(mktemp)"
+trap 'rm -f "$before" "$after" "$stdout_log" "$stderr_log" "$new_sessions_file" "$tagged"' EXIT
+while IFS= read -r f; do grep -qF "$RUN_TAG" "$f" 2>/dev/null && echo "$f"; done < "$new_sessions_file" > "$tagged" || true
+[[ -s "$tagged" ]] && cp "$tagged" "$new_sessions_file"
 
 if [[ ! -s "$new_sessions_file" ]]; then
   echo "No new session rollout file under $SESSIONS_ROOT" >&2
